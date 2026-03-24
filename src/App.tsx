@@ -19,15 +19,19 @@ import {
   LayoutGrid,
   Clock,
   Eye,
-  ArrowLeft
+  ArrowLeft,
+  Sparkles,
+  Send,
+  Loader2
 } from 'lucide-react';
 import { Question, QuizSettings, QuizState, UserAnswer } from './types';
 import { QUESTIONS, CATEGORIES, CATEGORIES_WITH_COUNTS } from './data/questions';
+import { GoogleGenAI } from "@google/genai";
 
 export default function App() {
   const [state, setState] = useState<QuizState>('setup');
   const [settings, setSettings] = useState<QuizSettings>({
-    categories: [...CATEGORIES],
+    categories: [],
     count: 20
   });
   const [currentQuestions, setCurrentQuestions] = useState<Question[]>([]);
@@ -37,6 +41,27 @@ export default function App() {
   const [startTime, setStartTime] = useState<number>(0);
   const [endTime, setEndTime] = useState<number>(0);
   const [browseCategory, setBrowseCategory] = useState<string | null>(null);
+  const [mistakeBank, setMistakeBank] = useState<Record<number, number>>({});
+  const [aiInput, setAiInput] = useState('');
+  const [aiResponse, setAiResponse] = useState('');
+  const [isAiLoading, setIsAiLoading] = useState(false);
+
+  // 從 localStorage 載入錯題本
+  useEffect(() => {
+    const saved = localStorage.getItem('mistakeBank');
+    if (saved) {
+      try {
+        setMistakeBank(JSON.parse(saved));
+      } catch (e) {
+        console.error('Failed to load mistake bank', e);
+      }
+    }
+  }, []);
+
+  // 儲存錯題本到 localStorage
+  useEffect(() => {
+    localStorage.setItem('mistakeBank', JSON.stringify(mistakeBank));
+  }, [mistakeBank]);
 
   // 初始化測驗
   const startQuiz = () => {
@@ -67,6 +92,14 @@ export default function App() {
     };
     setUserAnswers(newAnswers);
     setShowExplanation(true);
+
+    // 如果答錯，加入錯題本
+    if (!isCorrect) {
+      setMistakeBank(prev => ({
+        ...prev,
+        [question.id]: (prev[question.id] || 0) + 1
+      }));
+    }
   };
 
   // 下一題
@@ -91,6 +124,84 @@ export default function App() {
     setState('browse');
   };
 
+  // 針對錯題重新測驗
+  const startWrongQuestionsQuiz = () => {
+    const wrongQuestions = currentQuestions.filter((_, idx) => !userAnswers[idx]?.isCorrect);
+    if (wrongQuestions.length === 0) return;
+
+    setCurrentQuestions(wrongQuestions);
+    setCurrentIndex(0);
+    setUserAnswers([]);
+    setShowExplanation(false);
+    setStartTime(Date.now());
+    setState('session');
+  };
+
+  // 從錯題本開始測驗
+  const startMistakeBankQuiz = () => {
+    const mistakeIds = Object.keys(mistakeBank).map(Number);
+    if (mistakeIds.length === 0) return;
+
+    const filtered = QUESTIONS.filter(q => mistakeIds.includes(q.id));
+    // 優先選擇錯誤次數較多的題目
+    const sorted = [...filtered].sort((a, b) => (mistakeBank[b.id] || 0) - (mistakeBank[a.id] || 0));
+    const selected = sorted.slice(0, Math.min(settings.count, sorted.length));
+
+    setCurrentQuestions(selected);
+    setCurrentIndex(0);
+    setUserAnswers([]);
+    setShowExplanation(false);
+    setStartTime(Date.now());
+    setState('session');
+  };
+
+  const askAi = async () => {
+    if (!aiInput.trim()) return;
+    setIsAiLoading(true);
+    setAiResponse('');
+    
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const model = "gemini-3-flash-preview";
+      
+      // 準備背景資訊
+      const categoryInfo = Object.entries(CATEGORIES_WITH_COUNTS)
+        .map(([name, count]) => `- ${name}: ${count} 題`)
+        .join('\n');
+      
+      const systemInstruction = `你是一位專業的職業安全衛生（OSH）專家。
+目前使用者正在使用一個包含 1011 題職安衛題庫的練習 App。
+題庫分類包含：
+${categoryInfo}
+
+你的任務是根據使用者的問題，提供題庫內容的摘要、重點整理或解答相關知識。
+如果使用者詢問特定法規或安全知識，請以專業且易懂的方式回答。
+請盡量連結到職安衛的實際應用場景。`;
+
+      const response = await ai.models.generateContent({
+        model,
+        contents: aiInput,
+        config: {
+          systemInstruction,
+        }
+      });
+
+      setAiResponse(response.text || '抱歉，我無法生成回應。');
+    } catch (error) {
+      console.error('AI Error:', error);
+      setAiResponse('呼叫 AI 時發生錯誤，請稍後再試。');
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const clearMistakeBank = () => {
+    if (window.confirm('確定要清除所有錯題紀錄嗎？')) {
+      setMistakeBank({});
+      localStorage.removeItem('mistakeBank');
+    }
+  };
+
   // 計算分數
   const score = useMemo(() => {
     return userAnswers.filter(a => a?.isCorrect).length;
@@ -110,8 +221,17 @@ export default function App() {
             <h1 className="text-xl font-bold tracking-tight">職安衛題庫大師</h1>
           </div>
           {state === 'session' && (
-            <div className="text-sm font-medium text-gray-500">
-              進度: {currentIndex + 1} / {currentQuestions.length}
+            <div className="flex items-center gap-4">
+              <div className="text-sm font-medium text-gray-500 hidden sm:block">
+                進度: {currentIndex + 1} / {currentQuestions.length}
+              </div>
+              <button
+                onClick={resetQuiz}
+                className="flex items-center gap-1 text-sm font-bold text-gray-500 hover:text-red-600 transition-colors px-3 py-1.5 rounded-lg hover:bg-red-50"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                結束測驗
+              </button>
             </div>
           )}
         </div>
@@ -127,9 +247,29 @@ export default function App() {
               className="space-y-8"
             >
               <section className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
-                <div className="flex items-center gap-2 mb-6">
-                  <LayoutGrid className="w-5 h-5 text-blue-600" />
-                  <h2 className="text-lg font-bold">選擇受測群組 (可複選)</h2>
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-2">
+                    <LayoutGrid className="w-5 h-5 text-blue-600" />
+                    <h2 className="text-lg font-bold">選擇受測群組 (可複選)</h2>
+                  </div>
+                  {Object.keys(mistakeBank).length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={startMistakeBankQuiz}
+                        className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-bold hover:bg-red-100 transition-all border border-red-100"
+                      >
+                        <XCircle className="w-4 h-4" />
+                        我的錯題本 ({Object.keys(mistakeBank).length})
+                      </button>
+                      <button
+                        onClick={clearMistakeBank}
+                        title="清除錯題本"
+                        className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {CATEGORIES.map(cat => (
@@ -172,8 +312,6 @@ export default function App() {
                   ))}
                 </div>
               </section>
-              {/* ... rest of setup ... */}
-
               <section className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
                 <div className="flex items-center gap-2 mb-6">
                   <Settings className="w-5 h-5 text-blue-600" />
@@ -193,6 +331,45 @@ export default function App() {
                       {num} 題
                     </button>
                   ))}
+                </div>
+              </section>
+
+              <section className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
+                <div className="flex items-center gap-2 mb-6">
+                  <Sparkles className="w-5 h-5 text-purple-600" />
+                  <h2 className="text-lg font-bold">AI 智慧助手</h2>
+                </div>
+                <div className="space-y-4">
+                  <p className="text-sm text-gray-500">您可以詢問關於題庫的重點摘要、特定分類的知識點，或任何職安衛相關問題。</p>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={aiInput}
+                      onChange={(e) => setAiInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && askAi()}
+                      placeholder="例如：摘要一下「人因工程」的考點..."
+                      className="w-full pl-5 pr-12 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:border-purple-200 focus:bg-white transition-all outline-none"
+                    />
+                    <button
+                      onClick={askAi}
+                      disabled={isAiLoading || !aiInput.trim()}
+                      className="absolute right-2 top-2 p-2 text-purple-600 hover:bg-purple-50 rounded-xl transition-all disabled:opacity-30"
+                    >
+                      {isAiLoading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Send className="w-6 h-6" />}
+                    </button>
+                  </div>
+                  
+                  {aiResponse && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-purple-50 rounded-2xl p-6 border border-purple-100"
+                    >
+                      <div className="prose prose-sm max-w-none text-purple-900 whitespace-pre-wrap leading-relaxed">
+                        {aiResponse}
+                      </div>
+                    </motion.div>
+                  )}
                 </div>
               </section>
 
@@ -392,11 +569,20 @@ export default function App() {
                 <div className="flex flex-col sm:flex-row gap-4">
                   <button
                     onClick={resetQuiz}
-                    className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-md hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+                    className="flex-1 py-4 bg-white text-gray-700 border-2 border-gray-100 rounded-2xl font-bold hover:bg-gray-50 transition-all flex items-center justify-center gap-2"
                   >
                     <RotateCcw className="w-5 h-5" />
-                    重新開始
+                    返回設定
                   </button>
+                  {score < currentQuestions.length && (
+                    <button
+                      onClick={startWrongQuestionsQuiz}
+                      className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-md hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+                    >
+                      <Play className="w-5 h-5 fill-current" />
+                      針對錯題重新測驗
+                    </button>
+                  )}
                 </div>
               </div>
             </motion.div>
@@ -405,7 +591,7 @@ export default function App() {
       </main>
 
       <footer className="max-w-3xl mx-auto px-4 py-12 text-center text-gray-400 text-sm">
-        <p>© 2026 職安衛題庫大師 - 助力您的專業成長</p>
+        <p>© 2026 職安衛題庫大師 v1.0.0 - 助力您的專業成長</p>
       </footer>
     </div>
   );
