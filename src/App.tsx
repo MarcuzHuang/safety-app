@@ -331,6 +331,16 @@ ${categoryInfo}
                       {num} 題
                     </button>
                   ))}
+                  <button
+                    onClick={() => setSettings(prev => ({ ...prev, count: 9999 }))}
+                    className={`px-6 py-3 rounded-full font-medium transition-all border-2 ${
+                      settings.count === 9999
+                        ? 'border-blue-600 bg-blue-600 text-white'
+                        : 'border-gray-100 hover:border-gray-200 bg-gray-50'
+                    }`}
+                  >
+                    全部 {settings.categories.length > 0 && `(${settings.categories.reduce((sum, cat) => sum + CATEGORIES_WITH_COUNTS[cat], 0)} 題)`}
+                  </button>
                 </div>
               </section>
 
