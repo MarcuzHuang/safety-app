@@ -162,7 +162,7 @@ export default function App() {
     
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const model = "gemini-3.1-pro-preview";
+      const model = "gemini-3-flash-preview";
       
       // 準備背景資訊
       const categoryInfo = Object.entries(CATEGORIES_WITH_COUNTS)
@@ -600,14 +600,8 @@ ${categoryInfo}
         </AnimatePresence>
       </main>
 
-      <footer className="max-w-3xl mx-auto px-4 py-12 text-gray-400 text-sm flex flex-col sm:flex-row justify-between items-center gap-4">
-        <div className="text-center sm:text-left">
-          <p>© 2026 職安衛題庫大師 v1.0.0 - 助力您的專業成長</p>
-          <p className="text-xs mt-1 opacity-75">AI Model: gemini-3.1-pro-preview</p>
-        </div>
-        <div className="text-center sm:text-right">
-          <p>Created by Marcuz</p>
-        </div>
+      <footer className="max-w-3xl mx-auto px-4 py-12 text-center text-gray-400 text-sm">
+        <p>© 2026 職安衛題庫大師 v1.0.0 - 助力您的專業成長</p>
       </footer>
     </div>
   );
